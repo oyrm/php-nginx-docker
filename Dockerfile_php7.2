@@ -1,0 +1,93 @@
+FROM rockylinux/rockylinux:8.6.20220515 as builder
+
+ENV NGINX_VERSION 1.22.0
+ENV PHP_VERSION 7.2.34
+
+RUN mkdir -p /root/{src,scripts}
+RUN mkdir -p /data/{wwwroot,wwwlogs,server/nginx,server/php}
+
+RUN mkdir -p /root/scripts/ && mkdir -p /root/src/
+ADD src/ /root/src/
+ADD scripts/ /root/scripts/
+RUN chmod +x /root/scripts/*
+RUN ls -l /root/src/
+RUN ls -l /root/scripts/
+
+RUN sh /root/scripts/rockylinux8.sh
+
+RUN sh /root/scripts/nginx-${NGINX_VERSION}.sh
+RUN sh /root/scripts/php-${PHP_VERSION}.sh
+RUN sh /root/scripts/php-composer.sh
+RUN sh /root/scripts/php-ext-redis.sh
+RUN sh /root/scripts/php-ext-imagick.sh
+RUN sh /root/scripts/php-ext-amqp.sh
+RUN sh /root/scripts/php-ext-mongodb.sh
+RUN sh /root/scripts/php-ext-rdkafka.sh
+
+#二级构建
+FROM rockylinux/rockylinux:8.6.20220515 as runner
+
+COPY --from=builder /root/scripts/rockylinux8.sh /root/
+RUN cd /root/ && sh rockylinux8.sh
+
+#设置时区
+#ENV TZ=Asia/Shanghai
+#RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN yum install -y vim wget git unzip zip p7zip p7zip-plugins
+
+# NVM
+COPY --from=builder /root/src/nvm-0.39.1.tar.gz /root/
+RUN cd /root/ \
+    && tar zxvf nvm-0.39.1.tar.gz -C /root/ \
+    && mv /root/nvm-0.39.1 /root/.nvm \
+    && rm -rf /root/nvm-0.39.1.tar.gz \
+    && sh /root/.nvm/nvm.sh
+RUN echo 'export NVM_DIR="$HOME/.nvm"' >> /etc/profile \
+    && echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /etc/profile \
+    && echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> /etc/profile \
+    && source /etc/profile \
+    && echo 'source /etc/profile' >> /root/.bashrc
+
+RUN useradd -r -s /sbin/nologin -d /data -m -k no www
+
+RUN mkdir -p /usr/local/php
+RUN mkdir -p /usr/local/nginx
+RUN mkdir -p /usr/local/imagemagick
+RUN mkdir -p /usr/local/librabbitmq
+RUN mkdir -p /data/{wwwroot,wwwlogs,server}
+
+
+#——————————拷贝依赖-----------
+COPY --from=builder /lib64/ /lib64/
+COPY --from=builder /usr/local/lib/ /usr/local/lib/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+COPY --from=builder /etc/ld.so.conf.d/* /etc/ld.so.conf.d/
+RUN ldconfig
+
+#——---------拷贝软件-----------
+COPY --from=builder /usr/local/php /usr/local/php
+COPY --from=builder /usr/local/nginx /usr/local/nginx
+COPY --from=builder /usr/local/imagemagick /usr/local/imagemagick
+COPY --from=builder /usr/local/librabbitmq /usr/local/librabbitmq
+COPY --from=builder /usr/local/bin/composer /usr/local/bin/composer
+
+RUN ln -s /usr/local/php/bin/php /usr/local/bin/php
+RUN ln -s /usr/local/nginx/sbin/nginx /usr/local/bin/nginx
+RUN ln -s /usr/local/nginx/conf /data/server/nginx
+
+# NGINX
+ADD /nginx/conf/nginx.conf /usr/local/nginx/conf/
+ADD /nginx/conf/vhost /usr/local/nginx/conf/vhost
+ADD /wwwroot/default /data/wwwroot/default
+
+VOLUME ["/data/wwwroot", "/data/wwwlogs", "/data/server/nginx"]
+
+ADD entrypoint.sh /
+RUN chmod +x /entrypoint.sh
+
+# Set port
+EXPOSE 80
+
+# Start it
+ENTRYPOINT ["/entrypoint.sh"]
