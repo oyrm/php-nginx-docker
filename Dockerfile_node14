@@ -1,0 +1,17 @@
+FROM node:14-alpine
+
+#升级npm版本、安装tyarn
+RUN npm install -g npm tyarn --registry=https://registry.npmmirror.com
+#安装cnpm
+#RUN npm install -g cnpm --registry=https://registry.npmmirror.com
+#阿里云资源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+#安装依赖软件
+RUN apk add --update --no-cache make g++ automake autoconf libtool nasm libjpeg-turbo-dev libpng-dev git curl
+#RUN apk add --update --no-cache git curl
+#yarn优化设置
+RUN yarn config set registry https://registry.npmmirror.com
+RUN yarn config set cache-folder "/tmp/.cache/"
+#npm优化设置
+RUN npm config set cache "/tmp/.cache/"
+RUN npm config set registry https://registry.npmmirror.com

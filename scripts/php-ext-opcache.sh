@@ -1,5 +1,4 @@
 #!/bin/bash
-
 cat > /usr/local/php/etc/conf.d/ext-opcache.ini<<EOF
 [opcache]
 zend_extension=opcache.so

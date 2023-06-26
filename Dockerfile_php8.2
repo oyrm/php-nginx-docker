@@ -1,0 +1,83 @@
+FROM rockylinux/rockylinux:8 as builder
+
+ENV NGINX_VERSION 1.24.0
+ENV PHP_VERSION 8.2.7
+
+RUN mkdir -p /root/{src,scripts}
+RUN mkdir -p /data/{wwwroot,wwwlogs,server/nginx,server/php}
+
+RUN mkdir -p /root/scripts/ && mkdir -p /root/src/
+ADD src/ /root/src/
+ADD scripts/ /root/scripts/
+RUN chmod +x /root/scripts/*
+RUN ls -l /root/src/
+RUN ls -l /root/scripts/
+
+RUN sh /root/scripts/rockylinux8.sh
+
+RUN sh /root/scripts/nginx-${NGINX_VERSION}.sh
+RUN sh /root/scripts/php-${PHP_VERSION}.sh
+RUN sh /root/scripts/php-composer.sh
+RUN sh /root/scripts/php-ext-redis.sh
+RUN sh /root/scripts/php-ext-imagick.sh
+RUN sh /root/scripts/php-ext-amqp.sh
+RUN sh /root/scripts/php-ext-mongodb.sh
+RUN sh /root/scripts/php-ext-rdkafka.sh
+
+#二级构建
+FROM rockylinux/rockylinux:8 as runner
+
+COPY --from=builder /root/scripts/rockylinux8.sh /root/
+RUN cd /root/ && sh rockylinux8.sh
+
+#设置时区
+#ENV TZ=Asia/Shanghai
+#RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN yum -y install vim wget git unzip zip p7zip p7zip-plugins
+
+RUN useradd -r -s /sbin/nologin -d /data -m -k no www
+
+RUN mkdir -p /usr/local/php
+RUN mkdir -p /usr/local/nginx
+RUN mkdir -p /usr/local/imagemagick
+RUN mkdir -p /usr/local/librabbitmq
+RUN mkdir -p /data/{wwwroot,wwwlogs,server}
+
+#————————————————————————拷贝依赖-----------
+COPY --from=builder /usr/local/lib/ /usr/local/lib/
+COPY --from=builder /usr/local/lib64/ /usr/local/lib64/
+COPY --from=builder /lib64/ /lib64/
+COPY --from=builder /lib/ /lib/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+COPY --from=builder /usr/bin/ /usr/bin/
+COPY --from=builder /etc/ld.so.conf.d/* /etc/ld.so.conf.d/
+RUN ldconfig
+
+#——---------拷贝软件-----------
+COPY --from=builder /usr/local/php /usr/local/php
+COPY --from=builder /usr/local/nginx /usr/local/nginx
+COPY --from=builder /usr/local/imagemagick /usr/local/imagemagick
+COPY --from=builder /usr/local/librabbitmq /usr/local/librabbitmq
+COPY --from=builder /usr/local/bin/composer /usr/local/bin/composer
+COPY --from=builder /usr/share /usr/share
+
+RUN ln -s /usr/local/php/bin/php /usr/local/bin/php
+RUN ln -s /usr/local/nginx/sbin/nginx /usr/local/bin/nginx
+RUN ln -s /usr/local/nginx/conf /data/server/nginx
+
+# NGINX
+ADD /nginx/conf/nginx.conf /usr/local/nginx/conf/
+ADD /nginx/conf/vhost /usr/local/nginx/conf/vhost
+ADD /wwwroot/default /data/wwwroot/default
+
+VOLUME ["/data/wwwroot", "/data/wwwlogs", "/data/server/nginx"]
+
+ADD entrypoint.sh /
+RUN chmod +x /entrypoint.sh
+
+# Set port
+EXPOSE 80
+
+# Start it
+ENTRYPOINT ["/entrypoint.sh"]
